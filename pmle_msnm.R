@@ -1,5 +1,6 @@
 library(MASS)
 library(mvtnorm)
+library(gtools)
 
 r.msn <-
 function(n, mu, var, theta)###generate the random samples from MSN distribution
@@ -46,6 +47,7 @@ function(x, mu, omega, theta)###density function of MSN distribution
 fln <-
 function(x, alpha, mu, omega, theta, lambda, an, bn)###log-likelihood and penalized log-likelihood
 {
+	n = nrow(x)
 	sn = var(x)
 	an = an / n
 	bn = bn / log(n)
@@ -175,7 +177,7 @@ function(x, para0, lambda, an, bn)###iteration of EM algorithm
 	list('alpha' = alpha, 'mu' = mu, 'omega' = omega, 'theta' = theta, 'ln' = ln, 'pln' = pln)
 }
 
-phi.msn <-
+phi.msn <-### compute the PMLE
 function(x, m0, lambda, len, niter, tol, an, bn, pp)
 {
 #x: 		data, be a matrix with n rows and d columns.  
@@ -195,9 +197,9 @@ function(x, m0, lambda, len, niter, tol, an, bn, pp)
 	for (i in 1 : len)
 	{
 		print(i)
-		if (i == 1)
+		if (is.null(pp) == F & i == 1)
 			para0 = pp
-		if (i > 1)
+		if (is.null(pp) | i > 1)
 		###random initial values for EM-algorithm
 		{
 			alpha = runif(m0, 0, 1)
@@ -208,11 +210,11 @@ function(x, m0, lambda, len, niter, tol, an, bn, pp)
 			for (j in 1 : d)
 			{
 				mu = rbind(mu, runif(m0, quantile(x[, j], 0.25), quantile(x[, j], 0.75)))
-				#theta = rbind(theta, runif(m0, -5, 5))	
+				theta = rbind(theta, runif(m0, -5, 5))	
 			}
 			for (j in 1 : m0)
 				omega = cbind(omega, sn * runif(1, 0.5, 2))
-			para0 = list('alpha' = alpha, 'mu' = mu, 'omega' = omega, 'theta' = pp$theta)
+			para0 = list('alpha' = alpha, 'mu' = mu, 'omega' = omega, 'theta' = theta)
 		}
 		for (j in 1 : niter)###run niter EM-iterations first
 		{
@@ -254,8 +256,8 @@ function(x, m0, lambda, len, niter, tol, an, bn, pp)
 	'ploglik' = outpara$pln)
 }
 
-pmle.msn <-
-function(x, m0 = 2, lambda = 0, len = 1, niter = 10, tol = 1e-3, an = 1, bn = 1, pp)
+pmle.msn <- #present the output results of PMLE
+function(x, m0 = 2, lambda = 0, len = 10, niter = 10, tol = 1e-3, an = 1, bn = 1, pp = NULL)
 {
 #x: 		data, be a matrix with n rows and d columns. 
 #m0:	 	order of finite MSN mixture model.
@@ -263,6 +265,7 @@ function(x, m0 = 2, lambda = 0, len = 1, niter = 10, tol = 1e-3, an = 1, bn = 1,
 #len:		number of initial values chosen for the EM-algorithm.	
 #niter:      least number of iterations for all initial values in the EM-algorithm.
 #tol:		tolerance value for the convergence of the EM-algorithm.
+#an, bn:	the size of penalty functions
 
 	out = phi.msn(x, m0, lambda, len, niter, tol, an, bn, pp)
 	alphaa = out$alpha
@@ -271,18 +274,48 @@ function(x, m0 = 2, lambda = 0, len = 1, niter = 10, tol = 1e-3, an = 1, bn = 1,
 	thetaa = out$skew
 	loglik = out$loglik
 	ploglik = out$ploglik
-	index = rank(alphaa)
-	alpha = alphaa[index]
-	mu = muu[, index]
-	var = c()
-	d = ncol(x)
-	for (j in 1 : m0)
-	{
-		v = varr[, ((index[j] - 1) * d + 1) : (index[j] * d)]
-		var = cbind(var, v)
+	if (is.null(pp) == F)
+	{	
+		alpha0 = pp[[1]]
+		mu0 = pp[[2]]
+		var0 = pp[[3]]
+		theta0 = pp[[4]]
+		index = permutations(m0, m0)
+		dd = c()
+		for (i in 1 : nrow(index))
+		{
+			alpha = alphaa[index[i, ]] - alpha0
+			mu = muu[, index[i, ]] - mu0
+			var = c()
+			d = ncol(x)
+			for (j in 1 : m0)
+			{
+				v = varr[, ((index[i, j] - 1) * d + 1) : (index[i, j] * d)]
+				var = cbind(var, v)
+			}
+			var = var - var0
+			theta = thetaa[, index[i, ]] - theta0
+			dd[i] = sum(alpha ^ 2) + sum(mu ^ 2) + sum(var ^ 2) + sum(theta ^ 2)
+		}
+		ind = which.min(dd)
+		alpha = alphaa[index[ind, ]]
+		mu = muu[, index[ind, ]]
+		var = c()
+		d = ncol(x)
+		for (j in 1 : m0)
+		{
+			v = varr[, ((index[ind, j] - 1) * d + 1) : (index[ind, j] * d)]
+			var = cbind(var, v)
+		}
+		theta = thetaa[, index[ind, ]]
 	}
-	theta = thetaa[, index]
-	
+	if (is.null(pp))
+	{
+		alpha = alphaa
+		mu = muu
+		var = varr
+		theta = thetaa
+	}
 	list('PMLE of mixing proportions' = alpha,
 	'PMLE of location parameters' = mu, 
 	'PMLE of scale matrices' = var,
@@ -291,68 +324,32 @@ function(x, m0 = 2, lambda = 0, len = 1, niter = 10, tol = 1e-3, an = 1, bn = 1,
 	'Penalized log-likelihood' = ploglik)
 }
 
-n1 = 100
-n2 = 200
-n3 = 500
 
-alpha1 = c(0.3, 0.7)
-alpha2 = c(0.4,0.6)
-alpha3 = c(0.3,0.3,0.4)
-alpha4 = c(0.2,0.3,0.2,0.3)
-
-
-mu1 = c(-2, -2)
-mu2 = c(0, 0)
-mu3 = c(2, 2)
-mu4 = c(4, 4)
-
-Sigma1 = diag(c(1,1))
-Sigma2 = diag(c(2,2))
-Sigma3 = matrix(c(2,1,1,2),2,2)
-Sigma4 = matrix(c(3,1,1,3),2,2)
-
-shape1 =c(2,3)
-shape2 =c(-2,-3)
-shape3 =c(0,0)
-
-
-n=n3
-alpha = alpha2
-mu = cbind(mu2, mu4)
-var = cbind(Sigma2, Sigma4)
-theta = cbind(shape1, shape3)
+###Example 1
+### Generate the random samples from MSNM, then use pmle.msnm to estimate the parameters.
+n = 100
+alpha = c(0.4, 0.6)
+mu1 = c(0, 0)
+Sigma1 <- diag(c(2, 2))
+shape1 <- c(2, 3)
+mu2 = c(4, 4)
+Sigma2 = matrix(c(3, 1, 1, 3), 2, 2)
+shape2 <- c(0, 0)
+mu = cbind(mu1, mu2)
+var = cbind(Sigma1, Sigma2)
+theta = cbind(shape1, shape2)
+### true parameters
 pp = list('alpha' = alpha, 'mu' = mu, 'omega' = var, 'theta' = theta)
+### generate the random samples
+x = rmix.msn(n, alpha, mu, var, theta)
+### compute the PMLE
+res = pmle.msn(x, m0 = 2, pp = pp)
 
-ptm = proc.time()
-talpha = c()
-tmu = c()
-tvar = c()
-ttheta = c()
-i = 0
-while (i < 100)
-{
-	print(i)
-	x = rmix.msn(n, alpha, mu, var, theta)
-	res = pmle.msn(x, m0 = 2, pp = pp)
-	if (is.na(res[[6]]) == F)
-	{
-		talpha = rbind(talpha, res[[1]])
-		tmu = rbind(tmu, res[[2]])
-		tvar = rbind(tvar, res[[3]])
-		ttheta = rbind(ttheta, res[[4]])
-		i = i + 1
-	}
-}
-pptm = proc.time() - ptm
-
-mu1 = tmu[seq(1, nrow(tmu), 2), ]###第一维度的均值
-mu2 = tmu[seq(0, nrow(tmu), 2), ]###第二维度的均值
-theta1 = ttheta[seq(1, nrow(ttheta), 2), ]###第一维度的偏度
-theta2 = ttheta[seq(0, nrow(ttheta), 2), ]###第二维度的偏度
-var1 = tvar[seq(1, nrow(tvar), 2), ]###协方差阵的第一行
-var2 = tvar[seq(0, nrow(tvar), 2), ]###协方差阵的第二行
-###第一成分结果
-r1 = cbind(talpha[, 1], mu1[, 1], mu2[, 1], var1[, 1], var1[, 2], var2[, 2], theta1[, 1], theta2[, 1])
-###第二成分结果
-r2 = cbind(talpha[, 2], mu1[, 2], mu2[, 2], var1[, 3], var1[, 4], var2[, 4], theta1[, 2], theta2[, 2])
-
+###Example 2
+### fit the ais dataset using pmle.msnm
+read.csv("ais.csv")
+y = cbind(ais$BMI, ais$Bfat)
+### fit the data by a two-component MSNM
+res1 = pmle.msn(y, m0 = 2, len = 10)
+### fit the data by a three-component MSNM
+res2 = pmle.msn(y, m0 = 3, len = 10)
